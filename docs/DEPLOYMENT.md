@@ -38,10 +38,10 @@ All of these come from the deployment platform's environment — never from a fi
 
 | Variable | Required | Notes |
 |---|---|---|
-| `APP_KEY` | Yes | Platform-generated (see `render.yaml`), never reused across environments |
+| `APP_KEY` | Yes | Generate locally with `php artisan key:generate --show`, then paste the result into the Render dashboard. **Not** `generateValue: true` — Render's generic generator doesn't produce a Laravel-compatible base64 encryption key, and the app fails at runtime with `Unsupported cipher or incorrect key length`. Never committed. |
 | `APP_ENV` | Yes | `production` |
 | `APP_DEBUG` | Yes | `false` — never `true` outside local dev |
-| `APP_URL` | Yes | The public URL, once known |
+| `APP_URL` | Yes | The public URL, once known — for this deployment, `https://smart-library-zsh8.onrender.com` |
 | `DB_URL` (or `DB_HOST`/`DB_PORT`/`DB_DATABASE`/`DB_USERNAME`/`DB_PASSWORD`) | Yes | `config/database.php`'s `pgsql` connection accepts either form |
 | `SESSION_SECURE_COOKIE` | Recommended | `true` behind HTTPS |
 | `LIBRARY_LOAN_PERIOD_DAYS` | No | Defaults to 14 |
