@@ -48,6 +48,10 @@ All of these come from the deployment platform's environment — never from a fi
 | `AI_PROVIDER` / `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` | No | App is fully functional with these unset |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | No | "Continue with Google" only appears once these are set |
 
+## HTTPS behind Render's proxy
+
+Render terminates TLS at its edge and forwards requests to this container over plain HTTP, with the original scheme carried in `X-Forwarded-Proto`. `bootstrap/app.php` configures `trustProxies(at: '*')` so Laravel treats those forwarded headers as authoritative — the container is never directly reachable from the internet, so trusting every incoming connection as proxied is correct here, the same as on any PaaS with a dynamic edge IP range. Without this, `Request::isSecure()` is always false behind the proxy, and every generated asset/route URL (Vite's included) comes back as `http://`, which the browser blocks as mixed content on an `https://` page.
+
 ## Migrations
 
 Migrations are **not** run automatically by the container's entrypoint (`docker/production/entrypoint.sh`) — with more than one replica, every container start/restart would race the same migration against the same database. On Render's free tier specifically, they run via `initialDeployHook` (below); on a platform with shell/job access (AWS, a paid Render plan), run them as an explicit one-off before traffic is routed to a new release:
