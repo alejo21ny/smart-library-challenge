@@ -1,42 +1,15 @@
 # Smart Library
 
-A real library management system — catalog, borrow/return, role-based access, an event-driven audit trail, and an AI-assisted Library Assistant that never invents a book. Built as a technical challenge submission.
+A real library management system — catalog, borrow/return, role-based access, an event-driven audit trail, and a grounded natural-language Library Assistant that never invents a book.
 
-**Live URL:** _not deployed yet — see `docs/DEPLOYMENT.md` for the prepared, unexecuted Render/AWS plan._
-**Status:** feature-complete, polished, and locally verified end-to-end.
+## Overview
 
-## Screenshots
+Built as a technical challenge submission demonstrating clean MVC/domain layering, SOLID-friendly service boundaries, transactional/concurrency-safe business rules, and a scoped, non-overengineered application of hexagonal architecture where it actually earns its keep (the AI provider boundary) rather than everywhere. Full write-up in `ARCHITECTURE.md`.
 
-_Placeholder — screenshots (desktop/tablet/mobile, light/dark) to be added here after final visual sign-off._
+**Live Demo:** **https://smart-library-zsh8.onrender.com**
+**Source:** https://github.com/alejo21ny/smart-library-challenge
 
-## Terminology note
-
-The original assignment text used "checked in" / "checked out" ambiguously. This product uses explicit, unambiguous language instead: **actions** `BORROW BOOK` / `RETURN BOOK`, **book states** `AVAILABLE` / `BORROWED`. Full rationale in `ARCHITECTURE.md`.
-
-## Features
-
-**Catalog** — paginated, PostgreSQL full-text search (title/author/description) with a typo-tolerant fallback (see "Library Assistant" below), filterable by ISBN/author/category/tag/availability, sortable.
-
-**Books** (Librarian/Admin) — create, edit, delete, view: title, author, ISBN, description, category, tags, publication year, optional cover URL. Delete asks for confirmation via an in-app dialog, not a browser popup.
-
-**Loans** — borrow/return with a configurable default loan period (`LIBRARY_LOAN_PERIOD_DAYS`, default 14 days), overdue detection, per-member history. A book can never be double-borrowed — enforced by a PostgreSQL partial unique index *and* a locked transaction, not just application logic.
-
-**Roles & permissions** — `ADMIN` / `LIBRARIAN` / `MEMBER`, enforced server-side via Policies and middleware. Demo login works with no setup; Google OAuth is available as an optional, fully-wired extra (see below).
-
-**Library Assistant** — a small, real conversational assistant:
-- Natural language in ("Do you have Clean Architecture available?", "What books do I currently have borrowed?", staff get "Give me a quick circulation summary")
-- A deterministic action/tool router picks *what kind* of question it is — catalog search, availability check, your loans, or (staff-only) a circulation summary — then runs a real, read-only query against the actual database
-- Typo/word-order tolerant: `arquitecture clea` still finds *Clean Architecture*, via a PostgreSQL trigram fallback when the strict full-text search comes up empty
-- The AI (when configured) only ever extracts structured search parameters or improves the wording of an answer already grounded in real rows — it can never fabricate a book, and there is no borrow/return/delete path reachable through it
-- Works fully with **no AI key configured** — the deterministic fallback is the real, default experience, not a degraded stub
-
-**Audit trail** — every book create/update/delete, borrow/return, and role change is recorded via domain Events + one Listener (not scattered manual inserts), and surfaced as a human-readable "Recent activity" feed on the staff dashboard (e.g. *"Ada Admin borrowed Clean Architecture"*), gated to Admin/Librarian.
-
-**UI** — light/dark/system theme, responsive desktop/tablet/mobile (including a card layout for book management on small screens, not a horizontally-scrolling table), `prefers-reduced-motion` support, keyboard-accessible forms.
-
-## Stack
-
-Laravel 12 (PHP 8.5) · Inertia.js v2 + React 18 + TypeScript · Tailwind CSS · PostgreSQL 18 (+ `pg_trgm`) · Docker (Sail for dev, a separate production `Dockerfile`) · Pest 4 · Larastan · Pint · Playwright
+> Deployed on Render's free tier for this submission — the web service cold-starts after idle periods (the first request can take tens of seconds) and the free Postgres instance is time-limited. See `docs/DEPLOYMENT.md` for the full deployment model, including the documented AWS ECS/Fargate alternative.
 
 ## Demo accounts
 
@@ -46,9 +19,77 @@ Laravel 12 (PHP 8.5) · Inertia.js v2 + React 18 + TypeScript · Tailwind CSS ·
 | Librarian | `librarian@example.test` | `password` |
 | Member | `member@example.test` | `password` |
 
-Documented demo-only credentials for local evaluation — the login screen itself has a "Demo access" panel that fills these in for you. Never reused for anything real.
+The live login screen has a "Demo access" panel that fills these in for you. Documented demo-only credentials for reviewer convenience — never reused for anything real.
 
-## Setup (verified on Windows)
+## Screenshots
+
+| | |
+|---|---|
+| ![Admin dashboard](docs/screenshots/dashboard-admin.png) Admin dashboard | ![Catalog](docs/screenshots/catalog.png) Catalog |
+| ![Library Assistant](docs/screenshots/assistant.png) Library Assistant | ![Circulation](docs/screenshots/circulation.png) Circulation (staff) |
+| ![Dark mode](docs/screenshots/dark-mode.png) Dark mode | ![Mobile](docs/screenshots/mobile.png) Mobile |
+
+More screenshots (login, book detail) are in `docs/screenshots/`.
+
+## Terminology note
+
+The original assignment text used "checked in" / "checked out" ambiguously. This product uses explicit, unambiguous language instead: **actions** `BORROW BOOK` / `RETURN BOOK`, **book states** `AVAILABLE` / `BORROWED`. Full rationale in `ARCHITECTURE.md`.
+
+## Core Features
+
+**Catalog** — paginated, PostgreSQL full-text search (title/author/description) with a typo-tolerant fallback (see "Smart Library Assistant" below), filterable by ISBN/author/category/tag/availability, sortable.
+
+**Books** (Librarian/Admin) — create, edit, delete, view: title, author, ISBN, description, category, tags, publication year, optional cover URL. Delete asks for confirmation via an in-app dialog, not a browser popup.
+
+**Loans** — borrow/return with a configurable default loan period (`LIBRARY_LOAN_PERIOD_DAYS`, default 14 days), overdue detection, per-member history. A book can never be double-borrowed — enforced by a PostgreSQL partial unique index *and* a locked transaction, not just application logic.
+
+**Audit trail** — every book create/update/delete, borrow/return, and role change is recorded via domain Events + one Listener (not scattered manual inserts), and surfaced as a human-readable "Recent activity" feed on the staff dashboard, gated to Admin/Librarian.
+
+**UI** — light/dark/system theme, responsive desktop/tablet/mobile (including a card layout for book management on small screens, not a horizontally-scrolling table), `prefers-reduced-motion` support, keyboard-accessible forms.
+
+## Roles & Permissions
+
+`ADMIN` / `LIBRARIAN` / `MEMBER`, enforced server-side via Laravel Policies and route middleware — never just hidden in the UI. This is a **self-service** library: members borrow/return their own books directly; librarians/admins can additionally act on behalf of any user (in-person checkouts, corrections) and manage the catalog. Only Admins manage user accounts/roles. Full permission matrix in `ARCHITECTURE.md`.
+
+Sign-in options:
+- **Demo accounts** (above) — always available, no setup, works for any reviewer.
+- **Google SSO** — implemented and verified working in production. A new Google sign-in is always created as `MEMBER`; role elevation never comes from Google, ever. A verified-email flag is only trusted when Google's own `email_verified` claim comes back `true` for that exact account. **The Google OAuth app is currently in Google's "Test" publishing mode**, so Google sign-in only works for authorized test users added to that OAuth app — it is not yet available to an arbitrary Google account. Every reviewer can always use the seeded demo accounts above regardless.
+
+## Smart Library Assistant
+
+A grounded natural-language assistant over the real catalog and loan data — not a chatbot with a generic language model bolted on:
+
+- Ask in plain language: *"Do you have Clean Architecture available?"*, *"What books do I currently have borrowed?"*, or (staff) *"Give me a quick circulation summary"*.
+- A deterministic action router decides *what kind* of question it is — catalog search, availability check, your loans, or a staff-only circulation summary — then runs a real, read-only query against the actual database. Every book, loan, and count shown comes from a real row. **It never invents a book that doesn't exist.**
+- Fuzzy, typo/word-order tolerant catalog discovery: `arquitecture clea` still finds *Clean Architecture*, via a PostgreSQL trigram similarity fallback when the strict full-text search comes up empty.
+- **No external AI model is configured in this deployment.** The assistant runs entirely on its deterministic fallback in production right now — full search/availability/loans/summary functionality, zero external calls. The codebase includes a provider abstraction (`AiProviderInterface`) that supports plugging in an OpenAI-Chat-Completions-compatible endpoint to improve the phrasing of a grounded answer; that capability is implemented and tested, but no key is configured here, so it is not currently active. Either way, the tool surface is read-only — there is no borrow/return/delete path reachable through the Assistant.
+
+## Architecture
+
+See `ARCHITECTURE.md` for the domain model, availability's single source of truth, concurrency design, the RBAC/events/audit architecture, the Assistant's tool architecture and grounding guarantees, and deployment architecture.
+
+## Security
+
+See `SECURITY.md` for threat boundaries, CSRF, OAuth role handling, secret handling, the AI prompt/tool boundary, rate limiting, and safe logging.
+
+## Testing
+
+```bash
+docker compose exec laravel.test php artisan test                                   # Pest
+docker compose exec laravel.test ./vendor/bin/pint --test                            # code style (drop --test to auto-fix)
+docker compose exec laravel.test ./vendor/bin/phpstan analyse --memory-limit=1G      # static analysis (Larastan, level 5)
+npm run lint          # ESLint, check-only
+npm run typecheck     # tsc --noEmit
+npm run format:check  # Prettier, check-only
+npm run build          # TypeScript + Vite production build
+npm run test:e2e       # Playwright — see tests/e2e/
+```
+
+Current status: **93 Pest tests passing (339 assertions)** · Pint clean (117 files) · Larastan (level 5) clean · ESLint clean · typecheck clean · Prettier clean · production frontend build clean · **13/13 Playwright E2E tests passing**, covering admin/member login, dashboard, book create/edit, catalog search, borrow, double-borrow rejection, return, role-based 403, the Assistant's deterministic and fuzzy-query behavior, light/dark theme, and mobile navigation. All of this runs on every push via GitHub Actions CI (`.github/workflows/ci.yml`) — backend, frontend, and E2E as three independent jobs.
+
+Domain coverage (Pest): book CRUD, search by title/author/ISBN, availability/category filtering, borrow/return/due-dates/overdue, double-borrow rejection at both the app and database level, all three roles' permissions, the audit trail, the Assistant's deterministic fallback + fuzzy matching + tool routing + its guarantee that it never returns a nonexistent book, Google SSO (button visibility, new-user-is-always-MEMBER, account linking, email-verification handling, safe-when-unconfigured), reverse-proxy HTTPS handling, and the observability endpoints.
+
+## Local Setup (verified on Windows)
 
 ```bash
 # 1. Copy the environment file
@@ -80,50 +121,14 @@ The app is now at **http://localhost**. Stop everything with `docker compose dow
 
 **Note on Laravel Sail on Windows:** `./vendor/bin/sail`'s wrapper script only supports macOS/Linux/WSL2 — it refuses to run on plain Git Bash/MSYS. This project was built and verified using `docker compose` directly against Sail's own `compose.yaml`. On WSL2/macOS/Linux, `./vendor/bin/sail ...` works as a shorter alias for the `docker compose exec laravel.test ...` commands above.
 
-## Testing & quality
-
-```bash
-docker compose exec laravel.test php artisan test                                   # Pest
-docker compose exec laravel.test ./vendor/bin/pint --test                            # code style (drop --test to auto-fix)
-docker compose exec laravel.test ./vendor/bin/phpstan analyse --memory-limit=1G      # static analysis (Larastan, level 5)
-npm run lint          # ESLint, check-only
-npm run typecheck     # tsc --noEmit
-npm run format:check  # Prettier, check-only
-npm run build          # TypeScript + Vite production build
-npm run test:e2e       # Playwright — see tests/e2e/
-```
-
-Current status: **86 Pest tests passing (327 assertions)** · Pint clean (116 files) · Larastan (level 5) clean · ESLint clean · typecheck clean · Prettier clean · production frontend build clean · **13/13 Playwright E2E tests passing** covering admin/member login, dashboard, book create/edit, catalog search, borrow, double-borrow rejection, return, role-based 403, the Assistant's no-key and fuzzy-query behavior, light/dark, and mobile navigation.
-
-*A note on the E2E numbers:* all 13 pass reliably when each spec file is run as its own process (`npx playwright test <file>`) — that's how they were actually verified, repeatedly. Run as one continuous 13-test sequential suite in this project's local dev setup (`php artisan serve` behind a Windows Docker bind mount — see "Setup" note below), 2-4 of them occasionally time out due to that setup's well-documented resource contention over a long single run, not application defects; a CI environment or per-file execution doesn't exhibit this.
-
-Domain coverage (Pest): book CRUD, search by title/author/ISBN, availability/category filtering, borrow/return/due-dates/overdue, double-borrow rejection at both the app and database level, all three roles' permissions, the audit trail (including its human-readable descriptions), the Assistant's deterministic fallback + fuzzy matching + tool routing (search/availability/my-loans/staff-summary) + its guarantee that it never returns a nonexistent book, Google SSO (button visibility, new-user-is-always-MEMBER, account linking, safe-when-unconfigured), and the observability endpoints.
-
-## AI behavior
-
-The Library Assistant is **fully functional with no AI key configured** — see "Library Assistant" above. To enable natural-language intent extraction via a real OpenAI-compatible endpoint:
-
-```
-AI_PROVIDER=openai_compatible
-AI_BASE_URL=https://api.openai.com/v1   # or any compatible endpoint
-AI_API_KEY=sk-...
-AI_MODEL=gpt-4o-mini
-```
-
-The model is never the source of book data — every result comes from a real query against the catalog/loan tables (`App\AI\Tools\LibraryTools`). If the provider times out, rate-limits, or returns something malformed, the app degrades to the deterministic path silently — no raw error ever reaches the user. Full detail in `ARCHITECTURE.md` and `SECURITY.md`.
-
-## SSO behavior
-
-Google OAuth is fully wired end-to-end but stays invisible until configured: the "Continue with Google" button on Login/Register only renders when `GOOGLE_CLIENT_ID` is actually set (checked server-side), and the OAuth routes themselves 404 if it isn't — never a broken button. A new Google sign-in is always created as `MEMBER`; OAuth profile data can never select an elevated role. Returning users are matched by `google_id`, then by email. See `SECURITY.md`.
-
-## Architecture
-
-See `ARCHITECTURE.md` for the domain model, availability's single source of truth, concurrency design, the RBAC/events/audit architecture, the Assistant's tool architecture and grounding guarantees, deployment architecture, and key trade-offs.
-
-## Security
-
-See `SECURITY.md` for threat boundaries, CSRF, OAuth role handling, secret handling, the AI prompt/tool boundary, rate limiting, and safe logging.
+To try Google SSO or a real AI provider locally, set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI` or `AI_PROVIDER`/`AI_BASE_URL`/`AI_API_KEY`/`AI_MODEL` in `.env` — see `.env.example`. Both are fully optional; the app works completely without either.
 
 ## Deployment
 
-See `docs/DEPLOYMENT.md` for the prepared (not executed) Render deployment plan, environment variables, migration/seeding strategy, and the documented AWS ECS/Fargate + RDS alternative.
+Live on Render (free tier) at the URL above. See `docs/DEPLOYMENT.md` for the full deployment model — environment variables, HTTPS/reverse-proxy handling, migration/seeding strategy, free-vs-paid tier tradeoffs, and the documented AWS ECS/Fargate + RDS alternative.
+
+## Documentation
+
+- `ARCHITECTURE.md` — domain model, layering, concurrency, Assistant tool architecture, deployment architecture
+- `SECURITY.md` — threat boundaries, OAuth role handling, secret handling, AI boundary, rate limiting
+- `docs/DEPLOYMENT.md` — the executed Render deployment, environment variables, the AWS alternative

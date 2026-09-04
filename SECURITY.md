@@ -14,13 +14,15 @@ How Smart Library handles authorization, secrets, and the AI boundary. See `ARCH
 - The "Continue with Google" button is only ever rendered when `GOOGLE_CLIENT_ID` is actually configured (`googleOAuthEnabled`, shared server-side via `HandleInertiaRequests`) — a reviewer without that env var configured never sees a button that would 404.
 - The OAuth routes themselves (`/auth/google/redirect`, `/auth/google/callback`) independently `abort(404)` if Google isn't configured, regardless of what the frontend shows — the UI check is a convenience, not the actual guard.
 - **A brand-new Google sign-in is always created as `MEMBER`.** OAuth profile data (name, email, provider ID) is never used to select or elevate a role — see `GoogleController::callback()` and `tests/Feature/Auth/GoogleSsoTest.php`. Promoting a user to `LIBRARIAN`/`ADMIN` is only ever done explicitly by an existing Admin, through `/admin/users`.
+- Google's `email_verified` OIDC claim is read from the raw userinfo payload (`GoogleController::googleEmailIsVerified()`) and only ever stamps `email_verified_at` when it is strictly `true` **and** the Google account's email matches the exact local account being linked — it never verifies a different, unconfirmed email address on that account.
 - Returning users are matched first by `google_id`, then by email (to link an existing password-based account to Google) — never by name, which isn't a stable or unique identifier.
+- In production, this app's Google OAuth client is currently in Google's **Test** publishing mode — Google sign-in works only for authorized test users added to that OAuth app, not for an arbitrary Google account. The seeded demo accounts (`README.md`) remain available to every reviewer regardless.
 
 ## Secret handling
 
 - No secret is ever committed. `.env` is git-ignored; `.env.example` documents every variable with empty placeholders, and the application is fully functional with all of them left empty (AI provider, Google OAuth).
 - The production Docker image (`Dockerfile`) never copies a `.env` file in. All runtime configuration — `APP_KEY`, `DB_URL`, `AI_API_KEY`, `GOOGLE_CLIENT_SECRET`, etc. — comes from real environment variables supplied by the deployment platform at container start.
-- `APP_KEY` is platform-generated (see `render.yaml`'s `generateValue: true`), never hand-picked or reused across environments.
+- `APP_KEY` is generated locally with `php artisan key:generate --show` and entered once into the Render dashboard (`render.yaml` marks it `sync: false`) — never committed, never Render's own generic `generateValue: true` generator, which doesn't produce a Laravel-compatible base64 key.
 
 ## The AI boundary — what the model can and cannot do
 

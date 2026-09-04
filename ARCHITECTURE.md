@@ -1,6 +1,6 @@
 # Smart Library — Architecture
 
-**Status: Phase 3 complete.** All core domain features are implemented and manually verified end-to-end (see §17 for Phase 2, §18 for Phase 3 — the Assistant's tool architecture, production Docker/deployment prep, and observability).
+**Status: deployed and live** at `https://smart-library-zsh8.onrender.com`. All core domain features are implemented and verified end-to-end, both locally and in production (see §17 for Phase 2, §18 for Phase 3 — the Assistant's tool architecture, production Docker/deployment, and observability; §19 for the release that took this from "verified locally" to "live and reviewer-ready").
 
 ## 1. Purpose & Scope
 
@@ -27,7 +27,7 @@ This removes a real source of confusion for future maintainers and end users. Do
 | Testing | Pest 4 (+ pest-plugin-laravel) |
 | Static analysis | Larastan (PHPStan for Laravel) |
 | Code style | Laravel Pint |
-| CI | GitHub Actions (added in a later phase, once David approves a remote repo) |
+| CI | GitHub Actions (`.github/workflows/ci.yml`) — backend/frontend/E2E jobs on every push |
 
 Laravel is the core application — Inertia/React is the view layer rendered by Laravel, not a separate frontend service. This matches the assignment's explicit instruction not to substitute Next.js as the backend.
 
@@ -277,12 +277,12 @@ interface AiProviderInterface {
 | Audit trail | borrowing/returning produces the expected `AuditEvent` row (correct type, subject, user) |
 | Library Assistant | NL query → expected structured intent → correct real results, with `NullAiProvider` (no key configured) and with a faked real provider; asserts no book data appears in output that isn't a real row |
 
-Also: Pint (style), Larastan (static analysis), ESLint, `tsc --noEmit`, and Prettier all run as part of the local quality gate (see `README.md`'s "Testing & quality"); GitHub Actions CI wiring happens once a remote repository exists (explicitly deferred — no repo created yet). A formal Playwright E2E suite (`tests/e2e/`, `npm run test:e2e`) covers the reviewer-critical browser flows Pest can't — see §18.
+Also: Pint (style), Larastan (static analysis), ESLint, `tsc --noEmit`, and Prettier all run as part of the local quality gate (see `README.md`'s "Testing"), and identically in GitHub Actions CI (`.github/workflows/ci.yml`) on every push. A formal Playwright E2E suite (`tests/e2e/`, `npm run test:e2e`) covers the reviewer-critical browser flows Pest can't — see §18.
 
-## 13. Deployment Architecture (prepared, not executed — see `docs/DEPLOYMENT.md`)
+## 13. Deployment Architecture (live — see `docs/DEPLOYMENT.md`)
 
 - **Production Docker image** (`Dockerfile`, separate from `compose.yaml`'s local dev environment): a 3-stage build — `frontend` (Vite production build), `vendor` (`composer install --no-dev --optimize-autoloader`), `runtime` (`php:8.5-fpm-alpine` + nginx, supervised, no dev tooling). This has been built and verified locally (`docker build -f Dockerfile .` succeeds against this codebase), not just written.
-- **Immediate target: Render** — `render.yaml` (Blueprint) prepared: a `smart-library` Docker web service + a `smart-library-db` Postgres instance, `healthCheckPath: /up`, `APP_KEY` and all other secrets `sync: false` (generated locally with `php artisan key:generate --show` for `APP_KEY` specifically, then entered once in the dashboard — never in the file; Render's own `generateValue: true` doesn't produce a Laravel-compatible key). Intended flow: `GitHub → CI → Docker build → Render Web Service → Render PostgreSQL`. Full walkthrough in `docs/DEPLOYMENT.md`.
+- **Deployed on Render** — `render.yaml` (Blueprint): a `smart-library` Docker web service + a `smart-library-db` Postgres instance (both `region: oregon`), `healthCheckPath: /up`, `APP_KEY` and all other secrets `sync: false` (generated locally with `php artisan key:generate --show` for `APP_KEY` specifically, then entered once in the dashboard — never in the file; Render's own `generateValue: true` doesn't produce a Laravel-compatible key). Live flow: `GitHub → CI → Docker build → Render Web Service → Render PostgreSQL`, auto-deploying every push to `main` once CI is green. Full walkthrough in `docs/DEPLOYMENT.md`.
 - **Documented alternative: AWS ECS Fargate** — same container image, pushed to ECR, run on Fargate behind an ALB, RDS for PostgreSQL, Secrets Manager for env secrets, CloudWatch for logs, GitHub Actions for CI/CD. Architecture only — no Terraform, no AWS resources created. See `docs/DEPLOYMENT.md` §"AWS alternative".
 
 ## 14. Security Model
@@ -350,3 +350,17 @@ Assistant rebuilt into the tool-based architecture described in §11 (determinis
 - `npm run build` — clean production build
 - `docker build -f Dockerfile .` — succeeds; the built image was actually run (`docker run`) and its `/up` and `/up/db` endpoints curled and confirmed correct, including the security-relevant details (`expose_php=Off` → no `X-Powered-By` header; `APP_DEBUG=false` → no stack traces; `X-Request-Id` generated and honored)
 - Playwright E2E (`tests/e2e/`, 13 tests covering the 14 required reviewer flows — "admin login" and "dashboard loads" share one test): **13/13 passing** when each spec file is run as its own process. Run as one continuous 13-test sequential suite, 2-4 occasionally time out from this local setup's documented resource contention over a long run (not reproducible when isolated per-file, and not an application defect) — see `README.md`'s testing section for the honest caveat.
+
+## 19. Release Notes — GitHub, CI, Production Deployment, and Final Submission
+
+After Phase 3, the project went through: a first Git commit and CI wiring; pushing to a private GitHub repository with all three CI jobs (backend/frontend/E2E) green; a deliberate git history rewrite (via `git commit-tree`, verified tree-identical, `--force-with-lease` push) down to a clean two-commit history before the repo's history became load-bearing; and an actual production deployment to Render, including finding and fixing three real production-only bugs that never appeared in local Docker (a `generateValue: true` `APP_KEY` that isn't a valid Laravel key; missing `trustProxies()` causing mixed-content HTTP asset URLs behind Render's TLS-terminating edge; and a silently-discarded `email_verified_at` on Google sign-up caused by a field correctly excluded from `$fillable`, masking the actually-requested "check Google's own verification claim" fix underneath it). Each fix shipped as its own commit, verified against real GitHub Actions runs and the live deployment, not just locally.
+
+This final submission release captured screenshots directly from that live deployment, brought `README.md`/`SECURITY.md`/`docs/DEPLOYMENT.md` in line with the shipped, verified state (no more "not deployed yet" language), and re-ran the full quality gate one last time:
+
+- `docker compose exec laravel.test php artisan test` — **93/93 passing**, 339 assertions
+- `./vendor/bin/pint --test` — clean, 117 files
+- `./vendor/bin/phpstan analyse` (Larastan, level 5) — clean
+- `npm run lint` / `npm run typecheck` / `npm run format:check` — all clean
+- `npm run build` — clean production build
+- Playwright E2E — **13/13 passing** (each spec file run as its own process, per the same documented local-resource-contention caveat as §18; CI runs the full suite as one job and has been consistently green)
+- Secret scan across the working tree and the full `main` branch git history (diffs and commit messages) — no API keys, database credentials, `APP_KEY` values, or AI attribution trailers found anywhere
