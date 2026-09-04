@@ -50,7 +50,7 @@ All of these come from the deployment platform's environment — never from a fi
 
 ## Migrations
 
-Migrations are **not** run automatically by the container's entrypoint (`docker/production/entrypoint.sh`) — with more than one replica, every container start/restart would race the same migration against the same database. Run them as a one-off, before traffic is routed to a new release:
+Migrations are **not** run automatically by the container's entrypoint (`docker/production/entrypoint.sh`) — with more than one replica, every container start/restart would race the same migration against the same database. On Render's free tier specifically, they run via `initialDeployHook` (below); on a platform with shell/job access (AWS, a paid Render plan), run them as an explicit one-off before traffic is routed to a new release:
 
 ```bash
 php artisan migrate --force
@@ -60,26 +60,48 @@ php artisan migrate --force
 
 ## Seeding demo data
 
-`DemoSeeder` is **idempotent** — every row it writes uses `updateOrCreate` keyed on a natural identifier (user email, book title+author), and the loan-seeding block only runs `if (! Loan::query()->exists())`. Running it again on a database that already has reviewer activity will not duplicate demo users/books, and will not touch loans a reviewer has actually created:
+`DemoSeeder` is **idempotent** — every row it writes uses `updateOrCreate` (users, keyed by email; books, keyed by title+author) or `firstOrCreate` (tags), and the loan-seeding block only runs `if (! Loan::query()->exists())`. Running it again on a database that already has reviewer activity will not duplicate demo users/books, and will not touch loans a reviewer has actually created — confirmed by reading the seeder, not assumed:
 
 ```bash
-php artisan db:seed --class=Database\\Seeders\\DemoSeeder --force
+php artisan db:seed --class=DemoSeeder --force
 ```
 
-## Render deployment plan
+## Render deployment plan (free tier)
 
-`render.yaml` (Blueprint) is prepared — a `smart-library-db` (Postgres) plus a `smart-library` Docker web service, `healthCheckPath: /up`. To actually deploy:
+`render.yaml` (Blueprint) is prepared for a first deploy on Render's **current free tier** — a `smart-library-db` (Postgres 18) plus a `smart-library` Docker web service, same `region: oregon` for both (Render's private network only connects services within the same region).
 
-1. Push this repository to GitHub (not done yet — see `README.md`'s Git status).
+**What free-tier Render services do *not* have**, confirmed against Render's current docs before writing this: dashboard Shell access, SSH access, one-off Jobs, or `preDeployCommand` (that's a paid-plan-only field that runs before every deploy). None of the usual "just SSH in and run artisan" advice applies here.
+
+**What free tier *does* support: `initialDeployHook`.** It's a plain command string that Render runs exactly once, right after a service's first successful deploy — never again on later restarts or redeploys. `render.yaml` sets it to:
+
+```
+php artisan migrate --force && php artisan db:seed --class=DemoSeeder --force
+```
+
+This is why `healthCheckPath` stays `/up` (Laravel's own liveness check — confirms the app booted, nothing about the database) rather than this app's own `/up/db` readiness check: on a brand-new deploy the schema doesn't exist yet until `initialDeployHook` finishes, so a health check that required a working database would never pass and the deploy would be stuck. `/up/db` is for manual verification after the fact (step 5 below), not the Render health-check path.
+
+To actually deploy:
+
+1. Push this repository to GitHub (already done — see the repo's Actions tab for the current green CI run).
 2. In Render: New → Blueprint → point at the repo. Render reads `render.yaml`.
-3. Fill in the `sync: false` env vars in the dashboard (`APP_URL` once the service has a hostname; Google/AI credentials only if/when you have them).
-4. First deploy: once the service is up, run migrations + seed via Render's Shell (or a one-off Job):
-   ```bash
-   php artisan migrate --force
-   php artisan db:seed --class=DemoSeeder --force
-   ```
-5. **Render's free-tier web services don't offer a Pre-Deploy Command** (that's a paid-plan feature — it would otherwise be the natural place to run `migrate --force` automatically before each release). On the free tier, step 4's manual run via the Shell is the safest honest option for this challenge — not pretending the limitation doesn't exist. On a paid plan, move the migrate command into the service's Pre-Deploy Command and this becomes fully automatic.
-6. Auto-deploy is configured to trigger on push to the main branch. `.github/workflows/ci.yml` already runs the full gate (Pest/Pint/Larastan/lint/typecheck/format/build/Playwright E2E — the same commands as `README.md`'s "Testing & quality" section) on every push/PR to `main`; making it a required status check before merge means Render only ever deploys a commit that already passed it. The workflow file exists in this repository now — it just hasn't run on GitHub yet, since no remote has been created.
+3. Fill in the `sync: false` env vars in the dashboard (`APP_URL` once the service has a hostname; Google/AI credentials only if/when you have them — neither is required for the app to work).
+4. Trigger the first deploy. Render builds the Docker image, starts the service, and — once — runs `initialDeployHook` to migrate and seed.
+5. Once the deploy is live, manually confirm the database actually initialized by visiting `https://<service>.onrender.com/up/db` — expect `{"status":"ok","database":"ok"}`. If it instead returns the `{"status":"error","database":"unreachable"}` 503, the hook didn't run or failed — check the deploy's logs in the Render dashboard (this is a normal log view, not a Shell session, so it's available on free tier).
+6. Auto-deploy is configured to trigger on push to the main branch. `.github/workflows/ci.yml` already runs the full gate (Pest/Pint/Larastan/lint/typecheck/format/build/Playwright E2E — the same commands as `README.md`'s "Testing & quality" section) on every push/PR to `main` and is currently green on GitHub; making it a required status check before merge means Render only ever deploys a commit that already passed it.
+
+### Free vs. paid tier, explicitly
+
+| | Free (this plan) | Paid |
+|---|---|---|
+| First-time DB init | `initialDeployHook` — runs once, first deploy only | Same, or `preDeployCommand` |
+| Migrations on every subsequent deploy | **Not automatic** — see "Ongoing migrations" below | `preDeployCommand: php artisan migrate --force` runs before every deploy |
+| Shell / SSH / one-off Jobs | Not available | Available |
+| Postgres lifetime | **Expires and is deleted 30 days after creation** | Persistent |
+| Web service idle behavior | **Spins down after inactivity**; the next request wakes it (cold start, can take tens of seconds) | Always-on |
+
+**Ongoing migrations on free tier:** since there's no `preDeployCommand` and no Shell, a *schema-changing* redeploy on free tier needs either (a) a temporary one-time bump of the plan to run `migrate --force` once via Shell, then back down, or (b) accepting `initialDeployHook`-only coverage and re-triggering it by recreating the service if a schema change is needed before upgrading to a paid plan. This project's current migration set is exactly what `initialDeployHook` will apply on first deploy; there's no pending second migration to worry about yet.
+
+**This is a demo/challenge deployment, not durable production infrastructure** — the free Postgres instance will be deleted after 30 days (Render then permanently removes the data), and the web service will cold-start after periods of inactivity. Both are expected and acceptable for a technical-challenge submission; neither should be read as an oversight. A real production deployment of this app would use a paid Postgres plan (persistent) and either a paid always-on web service or a platform without idle spin-down (see the AWS alternative below).
 
 ## Google OAuth callback configuration
 
